@@ -1,0 +1,9 @@
+{
+  "test_accuracy": 0.5408333539962769,
+  "test_loss": 2.883450984954834,
+  "best_val_accuracy": 0.547122597694397,
+  "best_val_epoch": 54,
+  "train_val_gap": 0.4055137038230896,
+  "final_train_accuracy": 0.9526363015174866,
+  "approach": "no_augmentation_pure_regularization"
+}
