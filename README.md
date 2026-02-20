@@ -6,18 +6,32 @@ Im Rahmen der Arbeit wurden zwei unterschiedliche Ansätze umgesetzt:
 2. eine Klassifikation mittels eines Convolutional Neural Networks (CNN), bei der das Modell relevante Merkmale eigenständig während des Trainingsprozesses identifiziert und nutzt.
 ## Dataset
 Es wurde der Datensatz Free Music Archive (FMA) (https://github.com/mdeff/fma?tab=readme-ov-file)  verwendet. Konkret wurde der „fma_small“ Datensatz mit 8 balancierten
-Musikklassen (1000 Tracks pro Klasse) betrachtet. 
+Musikklassen (reduziert auf 200 Tracks pro Klasse) betrachtet. 
+
 ## Ergebnisse Ansatz 1.
-![Training_History](confusion_matrix_segments.png)
-## Test Accuracy: 73.42%
+Die besten Ergebnisse wurden erzielt, indem die Songs in 3-Sekunden-Segmente unterteilt wurden.
+Die Feature-Auswahl basiert auf vorherigen Experimenten. Dabei wurden die aussagekräftigsten Merkmale mithilfe eines scikit-learn Random Forest-Modells bestimmt und anschließend für das finale Modell verwendet.
+Modell: SVC (Support Vector Classifier)
+Kernel: rbf
+Hyperparameter-Optimierung: GridSearchCV
+Cross-Validation: GroupKFold (gruppiert nach track_id, um Data Leakage zu vermeiden)
+Feature-Skalierung: StandardScaler
+### Lern Kurve
+![Lernkurve](With_Features/Segments/Learning_Curve_V2.png)
+### Confusion Matrizen
+![Confusion Matrizen](With_Features/Segments/eval_svm_confusion_matrices.png)
 
 ## Ergebnisse Ansatz 2.
-### Training Curves
-![Training History](training_curves.png)
+Die besten Ergebnisse dieses Ansatzes wurden mit einem 2D-Convolutional Neural Network mit progressiver Filtererhöhung, BatchNorm, Dropout und L2-Regularisierung zur Genreklassifikation auf Basis von 3-Sekunden-Mel-Spektrogrammen gewonnen.
+### Lernkurve
+![Training History](Raw_ML/training_curves.png)
 
-### Confusion Matrix
-![Confusion Matrix](confusion_matrix_cnn.png)
+### Confusion Matrizen
+![Confusion Matrix](Raw_ML/eval_cnn_confusion_matrices.png)
 
-## Test Accuracy: 62.39%
-```
+## Limitationen
+Die Modelle wurden auf einem vergleichsweise kleinen Testdatensatz evaluiert. Dadurch ist die statistische Aussagekraft der Testergebnisse eingeschränkt. Bei kleinen Testmengen können einzelne Fehlklassifikationen die Gesamtgenauigkeit überproportional beeinflussen, wodurch die Ergebnisse stärker zufallsabhängig sind.
+Ein größerer und repräsentativerer Testdatensatz würde die Robustheit und Verlässlichkeit der Evaluation erhöhen und eine stabilere Einschätzung der tatsächlichen Modellleistung ermöglichen.
+Auffällig ist, dass die Modelle insbesondere bei den Genres „Experimental“ und „Pop“ Schwierigkeiten in der Klassifikation zeigen. Eine mögliche Ursache für dieses Verhalten könnte an der unscharfen Genredefinition liegen die "pop" und "Experimental" mit sich bringen. 
+
 
