@@ -1,24 +1,33 @@
-import numpy as np
+import pandas as pd
 
-X      = np.load("X.npy")
-y      = np.load("y.npy")
-genres = np.load("genres.npy")
+# ----------------------------
+# Metadaten laden
+# ----------------------------
+METADATA_PATH = "../fma_metadata/tracks.csv"
 
-print("=== DATEN-CHECK ===")
-print(f"X min: {X.min():.4f}, X max: {X.max():.4f}")
-print(f"X mean: {X.mean():.4f}, X std: {X.std():.4f}")
+print("=" * 60)
+print("FMA Small - Songs pro Genre")
+print("=" * 60)
 
-print("\n=== LABEL-CHECK ===")
-unique, counts = np.unique(y, return_counts=True)
-for u, c in zip(unique, counts):
-    print(f"   Label {u} ({genres[u]}): {c} Tracks")
+# CSV laden (Header hat 2 Zeilen)
+tracks = pd.read_csv(METADATA_PATH, index_col=0, header=[0, 1])
 
-print("\n=== DUPLIKAT-CHECK ===")
-print(f"Sample 0 == Sample 1?   {np.allclose(X[0], X[1])}")
-print(f"Sample 0 == Sample 100? {np.allclose(X[0], X[100])}")
-print(f"Sample 0 == Sample 500? {np.allclose(X[0], X[500])}")
+# Nur FMA Small subset filtern
+fma_small = tracks[tracks[('set', 'subset')] == 'small'].copy()
+fma_small = fma_small.dropna(subset=[('track', 'genre_top')])
 
-print("\n=== VARIANZ PRO GENRE ===")
-for i, genre in enumerate(genres):
-    mask = y == i
-    print(f"   {genre}: {X[mask].var():.6f}")
+# Genre-Spalte extrahieren
+genres = fma_small[('track', 'genre_top')]
+
+print(f"\nGesamtanzahl Tracks in FMA Small: {len(fma_small)}")
+print("\n--- Songs pro Genre ---")
+
+# Zählen und sortieren
+genre_counts = genres.value_counts().sort_index()
+
+for genre, count in genre_counts.items():
+    print(f"   {genre:20s}: {count:4d} Tracks")
+
+print("\n" + "=" * 60)
+print(f"Genres gesamt: {len(genre_counts)}")
+print("=" * 60)

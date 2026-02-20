@@ -1,181 +1,240 @@
-#Data Preprocessing
-import os
 import numpy as np
 import pandas as pd
-import librosa
-from skimage.transform import resize
-from tqdm import tqdm
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+from scipy import stats
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks, regularizers
 
 # ----------------------------
 # Konfiguration
 # ----------------------------
-AUDIO_DATASET_PATH = "../fma_small"
-METADATA_PATH      = "../fma_metadata/tracks.csv"
-OUTPUT_DIR         = "."
+DATA_DIR    = r"C:\Users\geite\Desktop\Uni\Master\WS25_26\Maschinelles_Lernen\music_classifier\Raw_ML"
+OUTPUT_DIR  = DATA_DIR
+RANDOM_SEED = 42
+BATCH_SIZE  = 32
+EPOCHS      = 100
 
-SR_TARGET          = 22050
-N_MELS             = 128
-SHAPE              = (128, 128)
-TRACKS_PER_CLASS   = 1000
-SEGMENT_DURATION   = 5      # Sekunden pro Segment
-N_SEGMENTS         = 6      # 6 × 5s = 30s pro Track
-RANDOM_SEED        = 42
-
+tf.random.set_seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 
 # ----------------------------
-# 1. Metadaten laden & filtern
+# 1. Daten laden
 # ----------------------------
 print("=" * 60)
-print("Preprocessing: Mel-Spektrogramme aus 5s-Segmenten")
+print("CNN Training mit Mel-Spektrogrammen (5s Segmente)")
 print("=" * 60)
 
-tracks = pd.read_csv(METADATA_PATH, index_col=0, header=[0, 1])
+print("\n[1/3] Lade Daten...")
+X_trainval     = np.load(os.path.join(DATA_DIR, "X.npy"))
+y_trainval     = np.load(os.path.join(DATA_DIR, "y.npy"))
+X_test         = np.load(os.path.join(DATA_DIR, "X_test.npy"))
+y_test         = np.load(os.path.join(DATA_DIR, "y_test.npy"))
+track_ids_test = np.load(os.path.join(DATA_DIR, "track_ids_test.npy"))
+genres         = np.load(os.path.join(DATA_DIR, "genres.npy"))
 
-fma_small_tracks = tracks[tracks[('set', 'subset')] == 'small'].copy()
-fma_small_tracks = fma_small_tracks.dropna(subset=[('track', 'genre_top')])
+print(f"   ✓ Train+Val: {X_trainval.shape[0]} Segmente")
+print(f"   ✓ Test:      {X_test.shape[0]} Segmente ({len(np.unique(track_ids_test))} Songs)")
+print(f"   ✓ Genres ({len(genres)}): {', '.join(genres)}")
 
-small_basic = pd.DataFrame({
-    'title':     fma_small_tracks[('track', 'title')].values,
-    'genre_top': fma_small_tracks[('track', 'genre_top')].values
-}, index=fma_small_tracks.index)
-small_basic.index.name = "track_id"
+# ----------------------------
+# 2. Train/Val Split
+# ----------------------------
+print("\n[2/3] Splitte Train+Val in Train (89%) und Val (11%)...")
 
-# Auf TRACKS_PER_CLASS Tracks pro Klasse begrenzen (balanciert)
-small_basic = (
-    small_basic
-    .groupby('genre_top', group_keys=False)
-    .apply(lambda g: g.sample(min(len(g), TRACKS_PER_CLASS), random_state=RANDOM_SEED))
+X_train, X_val, y_train, y_val = train_test_split(
+    X_trainval, y_trainval,
+    test_size=0.111,
+    random_state=RANDOM_SEED,
+    stratify=y_trainval
 )
 
-print(f"\nTracks gesamt: {len(small_basic)}")
-print("Verteilung:\n", small_basic['genre_top'].value_counts())
-
-genres       = sorted(small_basic['genre_top'].unique())
-genre_to_idx = {g: i for i, g in enumerate(genres)}
-print("\nGenre Mapping:", genre_to_idx)
+print(f"   ✓ Train: {X_train.shape[0]} Segmente")
+print(f"   ✓ Val:   {X_val.shape[0]} Segmente")
 
 # ----------------------------
-# 2. Hilfsfunktionen
+# 3. Modell
 # ----------------------------
-def get_fma_small_path(base_dir, track_id):
-    folder   = "{:03d}".format(track_id // 1000)
-    filename = "{:06d}.mp3".format(track_id)
-    return os.path.join(base_dir, folder, filename)
+def build_cnn(input_shape, num_classes):
+    inputs = layers.Input(shape=input_shape)
 
+    # Block 1
+    x = layers.Conv2D(32, (3, 3), padding='same')(inputs)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.Conv2D(32, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(0.15)(x)
 
-def segment_to_melspectrogram(segment, sr):
-    """Einen 5s Audio-Ausschnitt in ein normalisiertes Mel-Spektrogramm umwandeln."""
-    mel        = librosa.feature.melspectrogram(y=segment, sr=sr, n_mels=N_MELS)
-    mel_db     = librosa.power_to_db(mel, ref=np.max)
-    mel_resize = resize(mel_db, SHAPE, mode='reflect', anti_aliasing=True).astype(np.float32)
+    # Block 2
+    x = layers.Conv2D(64, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.Conv2D(64, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(0.20)(x)
 
-    mel_min, mel_max = mel_resize.min(), mel_resize.max()
-    if mel_max - mel_min > 0:
-        mel_resize = (mel_resize - mel_min) / (mel_max - mel_min)
-    else:
-        mel_resize = np.zeros_like(mel_resize)
+    # Block 3
+    x = layers.Conv2D(128, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(0.25)(x)
 
-    return np.expand_dims(mel_resize, axis=-1)  # (128, 128, 1)
+    # Classifier Head
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dense(256, kernel_regularizer=regularizers.l2(1e-4))(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.Dropout(0.35)(x)
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
 
+    return models.Model(inputs, outputs, name="MusicCNN")
 
-# ----------------------------
-# 3. Dataset erstellen
-# WICHTIG: Track-ID wird gespeichert für korrekten Split später
-# ----------------------------
-print("\n[1/2] Erstelle Segmente aus Tracks...")
-
-X          = []
-y          = []
-track_ids  = []   # NEU: Track-ID pro Segment merken für korrekten Split
-skipped    = 0
-segment_samples = SEGMENT_DURATION * SR_TARGET  # 5 * 22050 = 110250
-
-for track_id, row in tqdm(small_basic.iterrows(), total=len(small_basic)):
-    file_path = get_fma_small_path(AUDIO_DATASET_PATH, track_id)
-    if not os.path.exists(file_path):
-        skipped += 1
-        continue
-
-    try:
-        audio, sr = librosa.load(file_path, sr=SR_TARGET, mono=True)
-
-        # Track auf genau 30s bringen
-        target_samples = N_SEGMENTS * segment_samples
-        if len(audio) < target_samples:
-            audio = np.pad(audio, (0, target_samples - len(audio)), mode='constant')
-        else:
-            audio = audio[:target_samples]
-
-        # 6 Segmente à 5s extrahieren
-        label = genre_to_idx[row['genre_top']]
-        for i in range(N_SEGMENTS):
-            start   = i * segment_samples
-            segment = audio[start:start + segment_samples]
-            mel     = segment_to_melspectrogram(segment, sr)
-
-            X.append(mel)
-            y.append(label)
-            track_ids.append(track_id)   # Alle Segmente eines Tracks haben dieselbe ID
-
-    except Exception as e:
-        print(f"Fehler bei Track {track_id}: {e}")
-        skipped += 1
-
-X         = np.array(X, dtype=np.float32)
-y         = np.array(y, dtype=np.int32)
-track_ids = np.array(track_ids, dtype=np.int32)
-
-print(f"\n{len(X)} Segmente aus {len(small_basic) - skipped} Tracks erstellt.")
-print(f"{skipped} Tracks übersprungen.")
-print(f"X Shape: {X.shape}")
 
 # ----------------------------
-# 4. Track-Level Split
-# WICHTIG: Alle Segmente eines Tracks müssen in dieselbe Partition!
-# Sonst würde das Modell beim Test "schummeln" (Data Leakage)
+# 4. Training
 # ----------------------------
-print("\n[2/2] Track-Level Split (90% Train+Val / 10% Test)...")
+print(f"\n[3/3] Training...")
 
-unique_tracks = np.unique(track_ids)
-np.random.shuffle(unique_tracks)
+model = build_cnn(input_shape=X_train.shape[1:], num_classes=len(genres))
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
 
-n_test_tracks  = int(len(unique_tracks) * 0.10)
-test_track_ids = set(unique_tracks[:n_test_tracks])
-train_track_ids = set(unique_tracks[n_test_tracks:])
+cb_list = [
+    callbacks.ReduceLROnPlateau(
+        monitor='val_loss', factor=0.5, patience=7, min_lr=1e-6, verbose=1
+    ),
+    callbacks.EarlyStopping(
+        monitor='val_loss', patience=20,
+        restore_best_weights=True, verbose=1
+    )
+]
 
-train_mask = np.array([tid in train_track_ids for tid in track_ids])
-test_mask  = np.array([tid in test_track_ids  for tid in track_ids])
-
-X_trainval = X[train_mask]
-y_trainval = y[train_mask]
-X_test     = X[test_mask]
-y_test     = y[test_mask]
-
-print(f"   ✓ Train+Val Segmente: {len(X_trainval)}  (aus {len(train_track_ids)} Tracks)")
-print(f"   ✓ Test Segmente:      {len(X_test)}  (aus {len(test_track_ids)} Tracks)")
-
-# Klassenverteilung checken
-print("\n   Klassenverteilung Test:")
-for i, genre in enumerate(genres):
-    count = (y_test == i).sum()
-    print(f"      {genre}: {count} Segmente")
+history = model.fit(
+    X_train, y_train,
+    validation_data=(X_val, y_val),
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    callbacks=cb_list,
+    verbose=1
+)
 
 # ----------------------------
-# 5. Speichern
+# 5. Segment-Level Evaluation
 # ----------------------------
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+_, val_acc = model.evaluate(X_val, y_val, verbose=0)
+print(f"\n{'=' * 60}")
+print(f"VALIDATION ACCURACY: {val_acc:.2%}")
+print(f"{'=' * 60}")
 
-np.save(os.path.join(OUTPUT_DIR, "X.npy"),          X_trainval)
-np.save(os.path.join(OUTPUT_DIR, "y.npy"),          y_trainval)
-np.save(os.path.join(OUTPUT_DIR, "X_test.npy"),     X_test)
-np.save(os.path.join(OUTPUT_DIR, "y_test.npy"),     y_test)
-np.save(os.path.join(OUTPUT_DIR, "genres.npy"),     np.array(genres))
+y_pred_segments = np.argmax(model.predict(X_test), axis=1)
+seg_acc = accuracy_score(y_test, y_pred_segments)
 
-print("\n✓ Gespeichert:")
-print(f"   X.npy      → {X_trainval.shape}  (Train+Val)")
-print(f"   y.npy      → {y_trainval.shape}")
-print(f"   X_test.npy → {X_test.shape}  (Test, nicht anfassen!)")
-print(f"   y_test.npy → {y_test.shape}")
-print(f"   genres.npy → {genres}")
-print("\nFertig!")
+print(f"\nSegment-Level Test Accuracy: {seg_acc:.2%}")
+print(classification_report(y_test, y_pred_segments, target_names=genres))
+
+# ----------------------------
+# 6. Song-Level Majority Voting
+# ----------------------------
+print("\n--- Song-Level Majority Voting ---")
+
+results = pd.DataFrame({
+    'track_id': track_ids_test,
+    'true':     y_test,
+    'pred':     y_pred_segments
+})
+
+song_pred = results.groupby('track_id').agg(
+    true=('true', 'first'),
+    pred=('pred', lambda x: x.mode()[0])
+).reset_index()
+
+song_acc = accuracy_score(song_pred['true'], song_pred['pred'])
+
+print(f"\n{'=' * 60}")
+print(f"SONG-LEVEL ACCURACY (Majority Voting): {song_acc:.2%}")
+print(f"{'=' * 60}")
+print(classification_report(song_pred['true'], song_pred['pred'], target_names=genres))
+
+# ----------------------------
+# 7. Modell speichern
+# ----------------------------
+model.save(os.path.join(OUTPUT_DIR, "best_model.keras"))
+print(f"\n   ✓ Modell gespeichert als: best_model.keras")
+
+# ----------------------------
+# 8. Training Kurven
+# ----------------------------
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+fig.suptitle('Training History – 5s Segmente', fontsize=13)
+
+axes[0].plot(history.history['accuracy'],     label='Train Accuracy')
+axes[0].plot(history.history['val_accuracy'], label='Val Accuracy')
+axes[0].set_title('Accuracy')
+axes[0].set_xlabel('Epoch')
+axes[0].set_ylabel('Accuracy')
+axes[0].legend()
+axes[0].grid(True)
+
+axes[1].plot(history.history['loss'],     label='Train Loss')
+axes[1].plot(history.history['val_loss'], label='Val Loss')
+axes[1].set_title('Loss')
+axes[1].set_xlabel('Epoch')
+axes[1].set_ylabel('Loss')
+axes[1].legend()
+axes[1].grid(True)
+
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR, "training_curves.png"), dpi=150)
+plt.show()
+
+# ----------------------------
+# 9. Confusion Matrices
+# ----------------------------
+# Segment-Level
+cm_seg = confusion_matrix(y_test, y_pred_segments)
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm_seg, annot=True, fmt='d', cmap='Blues',
+            xticklabels=genres, yticklabels=genres)
+plt.ylabel('Wahre Klasse')
+plt.xlabel('Vorhergesagte Klasse')
+plt.title(f'Confusion Matrix – Segment-Level (Acc: {seg_acc:.2%})')
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR, "confusion_matrix_segment.png"), dpi=300)
+plt.show()
+
+# Song-Level
+cm_song = confusion_matrix(song_pred['true'], song_pred['pred'])
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm_song, annot=True, fmt='d', cmap='Greens',
+            xticklabels=genres, yticklabels=genres)
+plt.ylabel('Wahre Klasse')
+plt.xlabel('Vorhergesagte Klasse')
+plt.title(f'Confusion Matrix – Song-Level Majority Voting (Acc: {song_acc:.2%})')
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_DIR, "confusion_matrix_song.png"), dpi=300)
+plt.show()
+
+# ----------------------------
+# Zusammenfassung
+# ----------------------------
+print(f"\n{'=' * 60}")
+print("Training abgeschlossen!")
+print(f"   Val Accuracy:         {val_acc:.2%}")
+print(f"   Segment-Level Acc:    {seg_acc:.2%}")
+print(f"   Song-Level Acc:       {song_acc:.2%}  ← Hauptmetrik")
+print(f"   Modell:               best_model.keras")
+print(f"{'=' * 60}")

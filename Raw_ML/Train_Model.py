@@ -1,9 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 import os
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 import tensorflow as tf
 from tensorflow.keras import layers, models, callbacks, regularizers
 
@@ -29,24 +27,19 @@ print("=" * 60)
 print("\n[1/3] Lade Daten...")
 X_trainval = np.load(os.path.join(DATA_DIR, "X.npy"))
 y_trainval = np.load(os.path.join(DATA_DIR, "y.npy"))
-X_test     = np.load(os.path.join(DATA_DIR, "X_test.npy"))
-y_test     = np.load(os.path.join(DATA_DIR, "y_test.npy"))
 genres     = np.load(os.path.join(DATA_DIR, "genres.npy"))
 
 print(f"   ✓ Train+Val: {X_trainval.shape[0]} Segmente")
-print(f"   ✓ Test:      {X_test.shape[0]} Segmente")
 print(f"   ✓ Genres ({len(genres)}): {', '.join(genres)}")
 
 # ----------------------------
-# 2. Train/Val Split (aus Train+Val)
-# Ergibt effektiv: 80% Train / 10% Val / 10% Test
+# 2. Train/Val Split
 # ----------------------------
 print("\n[2/3] Splitte Train+Val in Train (89%) und Val (11%)...")
-print("   → Ergibt Gesamt-Split: ~80% Train / 10% Val / 10% Test")
 
 X_train, X_val, y_train, y_val = train_test_split(
     X_trainval, y_trainval,
-    test_size=0.111,  # 10% von 90% = 11.1% vom Gesamt
+    test_size=0.111,
     random_state=RANDOM_SEED,
     stratify=y_trainval
 )
@@ -97,7 +90,6 @@ def build_cnn(input_shape, num_classes):
 
     return models.Model(inputs, outputs, name="MusicCNN")
 
-
 # ----------------------------
 # 4. Training
 # ----------------------------
@@ -129,41 +121,11 @@ history = model.fit(
     verbose=1
 )
 
-# ----------------------------
-# 5. Evaluation auf Val Set
-# ----------------------------
 _, val_acc = model.evaluate(X_val, y_val, verbose=0)
-print(f"\n{'=' * 60}")
-print(f"VALIDATION ACCURACY: {val_acc:.2%}")
-print(f"{'=' * 60}")
+print(f"\nValidation Accuracy: {val_acc:.2%}")
 
 # ----------------------------
-# 6. Evaluation auf Test Set
-# ----------------------------
-print("\nEvaluierung auf Testset...")
-y_pred   = np.argmax(model.predict(X_test), axis=1)
-test_acc = accuracy_score(y_test, y_pred)
-
-print(f"\n{'=' * 60}")
-print(f"FINAL TEST ACCURACY: {test_acc:.2%}")
-print(f"{'=' * 60}")
-
-print("\nClassification Report:")
-print(classification_report(y_test, y_pred, target_names=genres))
-
-print("\n--- Accuracy pro Genre ---")
-for i, genre in enumerate(genres):
-    mask = y_test == i
-    if mask.sum() > 0:
-        genre_acc = accuracy_score(y_test[mask], y_pred[mask])
-        print(f"   {genre}: {genre_acc:.2%}")
-
-# Modell speichern
-model.save(os.path.join(OUTPUT_DIR, "best_model.keras"))
-print(f"\n   ✓ Modell gespeichert als: best_model.keras")
-
-# ----------------------------
-# 7. Training Kurven
+# 5. Training Kurven
 # ----------------------------
 fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 fig.suptitle('Training History – 5s Segmente', fontsize=13)
@@ -187,30 +149,10 @@ axes[1].grid(True)
 plt.tight_layout()
 plt.savefig(os.path.join(OUTPUT_DIR, "training_curves.png"), dpi=150)
 plt.show()
-print("   ✓ Training Kurven gespeichert als: training_curves.png")
+print("   ✓ Training Kurven gespeichert")
 
 # ----------------------------
-# 8. Confusion Matrix
+# 6. Modell speichern
 # ----------------------------
-cm = confusion_matrix(y_test, y_pred)
-plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=genres, yticklabels=genres)
-plt.ylabel('Wahre Klasse')
-plt.xlabel('Vorhergesagte Klasse')
-plt.title(f'Confusion Matrix – CNN Mel-Spektrogramme (Acc: {test_acc:.2%})')
-plt.xticks(rotation=45, ha='right')
-plt.tight_layout()
-plt.savefig(os.path.join(OUTPUT_DIR, "confusion_matrix_cnn.png"), dpi=300)
-plt.show()
-print("   ✓ Confusion Matrix gespeichert als: confusion_matrix_cnn.png")
-
-# ----------------------------
-# Zusammenfassung
-# ----------------------------
-print(f"\n{'=' * 60}")
-print("Training abgeschlossen!")
-print(f"   Val Accuracy:  {val_acc:.2%}")
-print(f"   Test Accuracy: {test_acc:.2%}")
-print(f"   Modell:        best_model.keras")
-print(f"{'=' * 60}")
+model.save(os.path.join(OUTPUT_DIR, "best_model.keras"))
+print(f"   ✓ Modell gespeichert: best_model.keras")
